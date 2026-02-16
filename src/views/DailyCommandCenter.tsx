@@ -2,7 +2,7 @@ import { useStore } from '../store';
 import { startOfDay, endOfDay } from '../utils/dates';
 import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
-import { parseCommand } from '../parser';
+import { parseCommandWithAI } from '../parser';
 import { executeCommand } from '../parser/executor';
 import { getEventsForDay } from '../utils/eventUtils';
 import { EventDetailModal } from '../components/EventDetailModal';
@@ -134,7 +134,7 @@ export function DailyCommandCenter() {
     setIsProcessing(true);
 
     try {
-      const command = parseCommand(text, filteredContacts, activeContextId);
+      const command = await parseCommandWithAI(text, filteredContacts, activeContextId);
 
       if (command.contactNames.length > 0) {
         setLastParsedContactNames(command.contactNames);

@@ -5,7 +5,7 @@ import { formatDate } from '../utils/dates';
 import toast from 'react-hot-toast';
 import { noteService } from '../services/notes';
 import { contactSuggestionService, type ContactSuggestion } from '../services/contactSuggestions';
-import { parseCommand } from '../parser';
+import { parseCommandWithAI } from '../parser';
 import { executeCommand } from '../parser/executor';
 import { theme } from '../styles/theme';
 
@@ -168,7 +168,7 @@ export function GeneralNotesView() {
     setIsProcessingQuickInput(true);
 
     try {
-      const command = parseCommand(quickInput, filteredContacts, activeContextId);
+      const command = await parseCommandWithAI(quickInput, filteredContacts, activeContextId);
 
       // If it's a high/medium confidence action item, execute it
       if (command.confidence === 'high' || command.confidence === 'medium') {
