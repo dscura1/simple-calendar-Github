@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import { DateTime } from 'luxon';
 import type {
   Context,
   Contact,
@@ -24,30 +25,86 @@ export class RelationshipCalendarDB extends Dexie {
   constructor() {
     super('RelationshipCalendarDB');
 
+    // Version 1: Original schema
     this.version(1).stores({
-      // Contexts
       contexts: '++id, name, type, parentId, createdAt, updatedAt',
-
-      // Contacts - indexed by contextId for filtering
       contacts: '++id, contextId, name, company, lastInteractionDate, nextFollowUpDate, createdAt, updatedAt',
-
-      // Events - indexed by contextId, startTime for filtering and date queries
       events: '++id, contextId, startTime, endTime, allDay, createdAt, updatedAt',
-
-      // Event-Contact junction table (many-to-many)
       eventContacts: '[eventId+contactId], eventId, contactId',
-
-      // Tasks - indexed by contextId, contactId, dueDate, completed
-      tasks: '++id, contextId, contactId, dueDate, completed, priority, createdAt, updatedAt',
-
-      // Notes - indexed by contextId, contactId, dateRef
-      notes: '++id, contextId, contactId, dateRef, createdAt, updatedAt',
-
-      // Interaction History
+      tasks: '++id, contextId, contactId, dueDate, completed, priority, linkedEventId, createdAt, updatedAt',
+      notes: '++id, contextId, contactId, dateRef, linkedEventId, createdAt, updatedAt',
       interactionHistory: '++id, contactId, eventId, noteId, interactionDate, interactionType, createdAt',
-
-      // Meeting Notes
       meetingNotes: '++id, eventId, noteId, createdAt, updatedAt',
+    });
+
+    // Version 2: Add general notes scope, topic tags, multi-contact linking
+    this.version(2).stores({
+      contexts: '++id, name, type, parentId, createdAt, updatedAt',
+      contacts: '++id, contextId, name, company, lastInteractionDate, nextFollowUpDate, createdAt, updatedAt',
+      events: '++id, contextId, startTime, endTime, allDay, createdAt, updatedAt',
+      eventContacts: '[eventId+contactId], eventId, contactId',
+      // Tasks: Add multi-entry index for linkedContactIds array, add dueDateKey
+      tasks: '++id, contextId, *linkedContactIds, dueDate, dueDateKey, completed, priority, linkedEventId, createdAt, updatedAt',
+      // Notes: Add multi-entry indexes for linkedContactIds and topicTags arrays, add scope and dateKey
+      notes: '++id, contextId, *linkedContactIds, dateRef, dateKey, *topicTags, scope, linkedEventId, createdAt, updatedAt',
+      interactionHistory: '++id, contactId, eventId, noteId, interactionDate, interactionType, createdAt',
+      meetingNotes: '++id, eventId, noteId, createdAt, updatedAt',
+    }).upgrade(async (tx) => {
+      console.log('🔄 Migrating database from version 1 to version 2...');
+
+      // Migrate Notes
+      const notesCount = await tx.table('notes').count();
+      console.log(`📝 Migrating ${notesCount} notes...`);
+
+      await tx.table('notes').toCollection().modify((note: any) => {
+        // Convert contactId to linkedContactIds array
+        if (note.contactId !== undefined) {
+          note.linkedContactIds = note.contactId ? [note.contactId] : [];
+          delete note.contactId;
+        } else {
+          note.linkedContactIds = [];
+        }
+
+        // Generate dateKey from dateRef
+        if (note.dateRef) {
+          const dt = DateTime.fromMillis(note.dateRef);
+          note.dateKey = dt.toFormat('yyyy-MM-dd');
+        }
+
+        // Determine scope
+        if (note.linkedEventId) {
+          note.scope = 'event';
+        } else if (note.dateRef) {
+          note.scope = 'day';
+        } else {
+          note.scope = 'general';
+        }
+
+        // Initialize topicTags
+        note.topicTags = [];
+      });
+
+      // Migrate Tasks
+      const tasksCount = await tx.table('tasks').count();
+      console.log(`✅ Migrating ${tasksCount} tasks...`);
+
+      await tx.table('tasks').toCollection().modify((task: any) => {
+        // Convert contactId to linkedContactIds array
+        if (task.contactId !== undefined) {
+          task.linkedContactIds = task.contactId ? [task.contactId] : [];
+          delete task.contactId;
+        } else {
+          task.linkedContactIds = [];
+        }
+
+        // Generate dueDateKey from dueDate
+        if (task.dueDate) {
+          const dt = DateTime.fromMillis(task.dueDate);
+          task.dueDateKey = dt.toFormat('yyyy-MM-dd');
+        }
+      });
+
+      console.log('✅ Database migration complete!');
     });
   }
 }

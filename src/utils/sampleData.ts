@@ -147,7 +147,7 @@ export async function seedSampleData() {
   // Add Tasks
   await db.tasks.add({
     contextId: acmeCorpId,
-    contactId: sarahId,
+    linkedContactIds: [sarahId],
     title: 'Prepare demo slides for Sarah meeting',
     description: 'Include Q1 feature highlights',
     dueDate: DateTime.now().plus({ days: 1 }).startOf('day').toMillis(),
@@ -159,7 +159,7 @@ export async function seedSampleData() {
 
   await db.tasks.add({
     contextId: acmeCorpId,
-    contactId: sarahId,
+    linkedContactIds: [sarahId],
     title: 'Send follow-up email with pricing',
     description: 'Include enterprise tier details',
     dueDate: DateTime.now().plus({ days: 2 }).startOf('day').toMillis(),
@@ -171,7 +171,7 @@ export async function seedSampleData() {
 
   await db.tasks.add({
     contextId: workContext.id!,
-    contactId: mikeId,
+    linkedContactIds: [mikeId],
     title: 'Research StartupXYZ background',
     description: 'Check recent funding, team size',
     dueDate: DateTime.now().plus({ days: 6 }).startOf('day').toMillis(),
@@ -183,7 +183,7 @@ export async function seedSampleData() {
 
   await db.tasks.add({
     contextId: academicContext.id!,
-    contactId: emilyId,
+    linkedContactIds: [emilyId],
     title: 'Review research paper draft',
     description: 'Provide feedback on methodology section',
     dueDate: DateTime.now().startOf('day').toMillis(),
@@ -195,6 +195,7 @@ export async function seedSampleData() {
 
   await db.tasks.add({
     contextId: personalContext.id!,
+    linkedContactIds: [],
     title: 'Book weekend hiking trip',
     description: 'Find good trail for Alex',
     dueDate: DateTime.now().plus({ days: 5 }).startOf('day').toMillis(),
@@ -206,6 +207,7 @@ export async function seedSampleData() {
 
   await db.tasks.add({
     contextId: workContext.id!,
+    linkedContactIds: [],
     title: 'Complete Q1 sales report',
     description: '',
     dueDate: DateTime.now().startOf('day').toMillis(),
@@ -218,35 +220,45 @@ export async function seedSampleData() {
   // Add Notes
   await db.notes.add({
     contextId: acmeCorpId,
-    contactId: sarahId,
+    linkedContactIds: [sarahId],
     title: 'Sarah\'s Key Requirements',
     body: '- Needs integration with Salesforce\n- Team size: 50-100 users\n- Budget approved for annual license\n- Decision timeline: end of Q1',
+    scope: 'general',
+    topicTags: [],
     createdAt: now,
     updatedAt: now,
   });
 
   await db.notes.add({
     contextId: academicContext.id!,
-    contactId: emilyId,
+    linkedContactIds: [emilyId],
     title: 'Research Notes - AI Ethics Paper',
     body: 'Key points for discussion:\n- Bias detection methodology\n- Dataset considerations\n- Real-world applications\n\nNext steps:\n- Revise introduction\n- Add case studies',
     dateRef: DateTime.now().startOf('day').toMillis(),
+    scope: 'day',
+    topicTags: [],
     createdAt: now,
     updatedAt: now,
   });
 
   await db.notes.add({
     contextId: personalContext.id!,
+    linkedContactIds: [],
     title: 'Weekend Ideas',
     body: 'Things to do:\n- Visit new art gallery\n- Try that new coffee shop\n- Finish reading "Atomic Habits"',
+    scope: 'general',
+    topicTags: ['Personal', 'Planning'],
     createdAt: now,
     updatedAt: now,
   });
 
   await db.notes.add({
     contextId: workContext.id!,
+    linkedContactIds: [],
     title: 'Q1 Goals',
     body: '1. Close 3 enterprise deals\n2. Launch new product features\n3. Hire 2 sales reps\n4. Improve customer retention by 15%',
+    scope: 'general',
+    topicTags: ['Strategy', 'Goals'],
     createdAt: now,
     updatedAt: now,
   });

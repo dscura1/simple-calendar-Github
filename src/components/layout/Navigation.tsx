@@ -6,6 +6,7 @@ const menuItems = [
   { id: 'monthly', label: 'Monthly', icon: '🗓️' },
   { id: 'contacts', label: 'Contacts', icon: '👥' },
   { id: 'notes', label: 'Notes', icon: '📝' },
+  { id: 'general-notes', label: 'General Notes', icon: '🗒️' },
   { id: 'settings', label: 'Settings', icon: '⚙️' },
 ] as const;
 

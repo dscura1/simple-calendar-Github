@@ -4,11 +4,13 @@ import { seedSampleData } from './utils/sampleData';
 import { useStore } from './store';
 import { Toaster } from 'react-hot-toast';
 import { AppShell } from './components/layout/AppShell';
+import { Navigation } from './components/layout/Navigation';
 import { DailyCommandCenter } from './views/DailyCommandCenter';
 import { WeeklyView } from './views/WeeklyView';
 import { MonthlyView } from './views/MonthlyView';
 import { ContactsView } from './views/ContactsView';
 import { NotesView } from './views/NotesView';
+import { GeneralNotesView } from './views/GeneralNotesView';
 import { SettingsView } from './views/SettingsView';
 import './App.css';
 
@@ -20,7 +22,7 @@ function App() {
     async function init() {
       try {
         await initializeDatabase();
-        await seedSampleData(); // Load sample data
+        await seedSampleData();
         await loadContexts();
         await loadAllData();
         setDbInitialized(true);
@@ -49,6 +51,7 @@ function App() {
     );
   }
 
+  // View router based on currentView state
   const renderView = () => {
     switch (currentView) {
       case 'daily':
@@ -61,6 +64,8 @@ function App() {
         return <ContactsView />;
       case 'notes':
         return <NotesView />;
+      case 'general-notes':
+        return <GeneralNotesView />;
       case 'settings':
         return <SettingsView />;
       default:
@@ -72,6 +77,7 @@ function App() {
     <>
       <Toaster position="top-right" />
       <AppShell>
+        <Navigation />
         {renderView()}
       </AppShell>
     </>

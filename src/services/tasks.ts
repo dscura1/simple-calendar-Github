@@ -1,5 +1,6 @@
 import { db } from '../db/database';
 import type { Task } from '../types/entities';
+import { followUpService } from './followUps';
 
 export const taskService = {
   // Create
@@ -30,7 +31,9 @@ export const taskService = {
   },
 
   async getByContact(contactId: number): Promise<Task[]> {
-    return await db.tasks.where('contactId').equals(contactId).toArray();
+    // Updated for multi-contact linking
+    const allTasks = await db.tasks.toArray();
+    return allTasks.filter(task => task.linkedContactIds.includes(contactId));
   },
 
   async getByDueDate(dueDate: number): Promise<Task[]> {
@@ -52,10 +55,25 @@ export const taskService = {
   async toggleComplete(id: number): Promise<void> {
     const task = await db.tasks.get(id);
     if (task) {
+      const newCompletedState = !task.completed;
       await db.tasks.update(id, {
-        completed: !task.completed,
+        completed: newCompletedState,
         updatedAt: Date.now(),
       });
+
+      // F7: Auto-update last interaction date when completing a task with contacts
+      if (newCompletedState && task.linkedContactIds.length > 0) {
+        // Update all linked contacts
+        for (const contactId of task.linkedContactIds) {
+          await followUpService.updateLastInteraction(contactId);
+          await followUpService.recordInteraction(
+            contactId,
+            'message', // Generic interaction type for tasks
+            Date.now(),
+            `Completed: ${task.title}`
+          );
+        }
+      }
     }
   },
 

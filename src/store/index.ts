@@ -13,7 +13,7 @@ import { eventService } from '../services/events';
 import { taskService } from '../services/tasks';
 import { noteService } from '../services/notes';
 
-type ViewType = 'daily' | 'weekly' | 'monthly' | 'contacts' | 'notes' | 'settings';
+type ViewType = 'daily' | 'weekly' | 'monthly' | 'contacts' | 'notes' | 'general-notes' | 'settings';
 
 interface AppState {
   // Navigation

@@ -1,221 +1,363 @@
 import { useStore } from '../store';
-import { startOfDay, endOfDay, formatTime } from '../utils/dates';
-import { useState } from 'react';
+import { startOfDay, endOfDay } from '../utils/dates';
+import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
+import { parseCommand } from '../parser';
+import { executeCommand } from '../parser/executor';
+import { getEventsForDay } from '../utils/eventUtils';
+import { EventDetailModal } from '../components/EventDetailModal';
+import { eventService } from '../services/events';
+import { followUpService, type FollowUpContact } from '../services/followUps';
+import type { Event } from '../types/entities';
+import { DateTime } from 'luxon';
+import { theme } from '../styles/theme';
+import { TopNav } from '../components/TopNav';
+import { QuickInput } from '../components/QuickInput';
+import { TimelineCalendar } from '../components/TimelineCalendar';
+import { ContextSidebar } from '../components/ContextSidebar';
+
+// Single source of truth for view state
+type ViewMode = 'day' | 'week' | 'month';
 
 export function DailyCommandCenter() {
-  const { filteredEvents, filteredTasks, filteredNotes, toggleTaskComplete, activeContextId } = useStore();
-  const [quickInput, setQuickInput] = useState('');
+  const {
+    filteredEvents,
+    filteredTasks,
+    filteredNotes,
+    filteredContacts,
+    contexts,
+    toggleTaskComplete,
+    activeContextId,
+    setActiveContext,
+    addTask,
+    addEvent,
+    addNote,
+    addContact,
+  } = useStore();
 
-  const todayStart = startOfDay();
-  const todayEnd = endOfDay();
+  // SCOPE STATE: Day Scope vs Event Scope
+  const [view, setView] = useState<ViewMode>('day');
+  const [currentDate, setCurrentDate] = useState(DateTime.now());
+  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null); // null = Day Scope
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [eventContactCounts, setEventContactCounts] = useState<Map<number, number>>(new Map());
+  const [lastParsedContactNames, setLastParsedContactNames] = useState<string[]>([]);
+  const [followUpContacts, setFollowUpContacts] = useState<FollowUpContact[]>([]);
+  const [eventDetailModalEvent, setEventDetailModalEvent] = useState<Event | null>(null);
 
-  const todaysEvents = filteredEvents.filter(
-    (e) => e.startTime >= todayStart && e.startTime <= todayEnd
-  );
+  // Date key for filtering (YYYY-MM-DD)
+  const selectedDateKey = currentDate.toFormat('yyyy-MM-dd');
+  const todayStart = startOfDay(currentDate.toMillis());
+  const todayEnd = endOfDay(currentDate.toMillis());
 
-  const todaysTasks = filteredTasks.filter(
-    (t) => t.dueDate && t.dueDate >= todayStart && t.dueDate <= todayEnd
-  );
+  const todaysEvents = getEventsForDay(filteredEvents, todayStart, todayEnd);
 
-  const todaysNotes = filteredNotes.filter(
-    (n) => n.dateRef && n.dateRef >= todayStart && n.dateRef <= todayEnd
-  );
+  // SCOPE-AWARE FILTERING LOGIC
+  // If selectedEvent exists (Event Scope):
+  //   - tasks = tasks linked to this event
+  //   - notes = notes linked to this event
+  // Else (Day Scope):
+  //   - tasks = tasks for selected day (not linked to any event)
+  //   - notes = notes for selected day (not linked to any event)
+  const scopedTasks = selectedEvent
+    ? filteredTasks.filter(t => t.linkedEventId === selectedEvent.id)
+    : filteredTasks.filter(t => {
+        // Day scope: tasks for this day, not linked to events
+        if (t.linkedEventId) return false; // Exclude event-linked tasks
+        if (!t.dueDate) return false;
+        return t.dueDate >= todayStart && t.dueDate <= todayEnd;
+      });
 
-  const handleQuickInputSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (quickInput.trim()) {
-      toast('Natural language parsing coming in F1!', { icon: '🚀' });
-      setQuickInput('');
+  const scopedNotes = selectedEvent
+    ? filteredNotes.filter(n => n.linkedEventId === selectedEvent.id)
+    : filteredNotes.filter(n => {
+        // Day scope: notes for this day, not linked to events, not general
+        if (n.scope === 'general') return false; // Exclude general notes
+        if (n.linkedEventId) return false; // Exclude event-linked notes
+        if (!n.dateRef) return false;
+        return n.dateRef >= todayStart && n.dateRef <= todayEnd;
+      });
+
+  // SCOPE-AWARE CONTACTS
+  // In Event Scope: show contacts linked to the event
+  // In Day Scope: show follow-ups
+  const scopedFollowUps = selectedEvent
+    ? [] // TODO: Load event-linked contacts when in Event Scope
+    : followUpContacts;
+
+  // Escape key handler: Exit Event Scope to Day Scope
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedEvent) {
+        setSelectedEvent(null);
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [selectedEvent]);
+
+  // Clear selected event when date changes
+  useEffect(() => {
+    setSelectedEvent(null);
+  }, [selectedDateKey]);
+
+  // Load contact counts for events
+  useEffect(() => {
+    const loadContactCounts = async () => {
+      const counts = new Map<number, number>();
+      for (const event of todaysEvents) {
+        if (event.id) {
+          const contactIds = await eventService.getEventContacts(event.id);
+          counts.set(event.id, contactIds.length);
+        }
+      }
+      setEventContactCounts(counts);
+    };
+    loadContactCounts();
+  }, [todaysEvents.length]);
+
+  // Load follow-up contacts (Day Scope only)
+  useEffect(() => {
+    const loadFollowUps = async () => {
+      const contacts = await followUpService.getContactsNeedingFollowUp(activeContextId || undefined);
+      setFollowUpContacts(contacts);
+    };
+    loadFollowUps();
+  }, [activeContextId, filteredContacts.length]);
+
+  const handleQuickInputSubmit = async (text: string) => {
+    if (!activeContextId) {
+      toast.error('Please select a context first');
+      return;
+    }
+
+    setIsProcessing(true);
+
+    try {
+      const command = parseCommand(text, filteredContacts, activeContextId);
+
+      if (command.contactNames.length > 0) {
+        setLastParsedContactNames(command.contactNames);
+      }
+
+      if (command.confidence === 'high' || command.confidence === 'medium') {
+        const result = await executeCommand(command, {
+          addTask,
+          addEvent,
+          addNote,
+        });
+
+        if (result.success) {
+          toast.success(result.message);
+          if (result.warnings.length > 0) {
+            setTimeout(() => {
+              result.warnings.forEach(w => toast(w, { icon: '⚠️', duration: 3000 }));
+            }, 500);
+          }
+        } else {
+          toast.error(result.message);
+        }
+      } else {
+        await addNote({
+          contextId: activeContextId,
+          title: text,
+          body: text,
+          dateRef: command.dateStart,
+          linkedContactIds: [],
+          scope: 'day',
+          topicTags: [],
+        });
+        toast('Created as note (low confidence). Try being more specific!', {
+          icon: '📝',
+          duration: 4000,
+        });
+      }
+    } catch (error) {
+      console.error('Command execution error:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to process command');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // SCOPE ACTION: Select Event (enter Event Scope)
+  const handleSelectEvent = (event: Event) => {
+    setSelectedEvent(event);
+  };
+
+  // SCOPE ACTION: Clear selected event (exit Event Scope to Day Scope)
+  const handleClearScope = () => {
+    setSelectedEvent(null);
+  };
+
+  // SCOPE ACTION: Create task in current scope
+  const handleCreateTaskInScope = async (title: string) => {
+    if (!activeContextId) {
+      toast.error('Please select a context first');
+      return;
+    }
+
+    try {
+      if (selectedEvent) {
+        // Event Scope: link task to event
+        await addTask({
+          contextId: activeContextId,
+          title,
+          linkedEventId: selectedEvent.id,
+          dueDate: selectedEvent.startTime,
+          linkedContactIds: [],
+          completed: false,
+        });
+        toast.success('Task added to event');
+      } else {
+        // Day Scope: link task to date
+        await addTask({
+          contextId: activeContextId,
+          title,
+          dueDate: todayStart,
+          linkedContactIds: [],
+          completed: false,
+        });
+        toast.success('Task added to day');
+      }
+    } catch (error) {
+      toast.error('Failed to create task');
+    }
+  };
+
+  // SCOPE ACTION: Create note in current scope
+  const handleCreateNoteInScope = async (body: string) => {
+    if (!activeContextId) {
+      toast.error('Please select a context first');
+      return;
+    }
+
+    try {
+      if (selectedEvent) {
+        // Event Scope: link note to event
+        await addNote({
+          contextId: activeContextId,
+          title: `Event note: ${selectedEvent.title}`,
+          body,
+          linkedEventId: selectedEvent.id,
+          dateRef: selectedEvent.startTime,
+          linkedContactIds: [],
+          scope: 'event',
+          topicTags: [],
+        });
+        toast.success('Note added to event');
+      } else {
+        // Day Scope: link note to date
+        await addNote({
+          contextId: activeContextId,
+          title: `Daily note: ${selectedDateKey}`,
+          body,
+          dateRef: todayStart,
+          linkedContactIds: [],
+          scope: 'day',
+          topicTags: [],
+        });
+        toast.success('Note added to day');
+      }
+    } catch (error) {
+      toast.error('Failed to create note');
     }
   };
 
   return (
-    <div style={{ padding: '20px', maxWidth: '1400px', margin: '0 auto' }}>
-      {/* Quick Input */}
-      <form onSubmit={handleQuickInputSubmit} style={{ marginBottom: '24px' }}>
-        <input
-          type="text"
-          value={quickInput}
-          onChange={(e) => setQuickInput(e.target.value)}
-          placeholder="Type anything… (e.g., 'Follow up with Sarah next Tuesday')"
-          style={{
-            width: '100%',
-            padding: '12px 16px',
-            fontSize: '15px',
-            border: '2px solid #e5e7eb',
-            borderRadius: '8px',
-            outline: 'none',
-          }}
-          onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-          onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
-        />
-      </form>
+    <>
+      {/* Unified Header - single source of all controls */}
+      <TopNav
+        currentView={view}
+        onViewChange={setView}
+        currentDate={currentDate}
+        onDateChange={setCurrentDate}
+        contexts={contexts}
+        activeContextId={activeContextId}
+        onContextChange={setActiveContext}
+      />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-        {/* Left Panel */}
-        <div>
-          {/* Today's Schedule */}
-          <div style={{
-            background: 'white',
-            borderRadius: '8px',
-            padding: '20px',
-            marginBottom: '20px',
-            border: '1px solid #e5e7eb',
+      {/* Quick Input - appears once only */}
+      <QuickInput
+        onSubmit={handleQuickInputSubmit}
+        isProcessing={isProcessing}
+      />
+
+      {/* Main Content - flex: 1, min-height: 0 for proper scrolling */}
+      <div className="main-content" style={{
+        flex: 1,
+        minHeight: 0,
+        display: 'flex',
+        overflow: 'hidden',
+      }}>
+        {/* Daily Split Layout: Timeline (~65%) + Sidebar (~35%) */}
+        <div className="daily-split" style={{
+          width: '100%',
+          height: '100%',
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1fr) 360px',
+        }}>
+          {/* Left: Timeline Pane (scrollable) */}
+          <div className="timeline-pane" style={{
+            minHeight: 0,
+            overflowY: 'auto',
+            background: theme.colors.bg.primary,
           }}>
-            <h2 style={{ margin: '0 0 16px 0', fontSize: '18px' }}>
-              📅 Today's Schedule
-            </h2>
-            {todaysEvents.length === 0 ? (
-              <p style={{ color: '#9ca3af', fontSize: '14px' }}>No events today</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {todaysEvents.map((event) => (
-                  <div
-                    key={event.id}
-                    style={{
-                      padding: '12px',
-                      background: '#f0f9ff',
-                      borderRadius: '6px',
-                      borderLeft: '3px solid #3b82f6',
-                    }}
-                  >
-                    <div style={{ fontWeight: 600, marginBottom: '4px' }}>
-                      {event.title}
-                    </div>
-                    <div style={{ fontSize: '13px', color: '#6b7280' }}>
-                      {formatTime(event.startTime)}
-                      {event.endTime && ` - ${formatTime(event.endTime)}`}
-                    </div>
-                    {event.location && (
-                      <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '4px' }}>
-                        📍 {event.location}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+            <TimelineCalendar
+              date={currentDate}
+              events={todaysEvents}
+              selectedEventId={selectedEvent?.id || null}
+              onEventClick={handleSelectEvent}
+              onClearSelection={handleClearScope}
+            />
           </div>
 
-          {/* Today's Tasks */}
-          <div style={{
-            background: 'white',
-            borderRadius: '8px',
-            padding: '20px',
-            border: '1px solid #e5e7eb',
+          {/* Right: Context Pane (scrollable) - SCOPE-AWARE */}
+          <div className="right-pane" style={{
+            minHeight: 0,
+            overflowY: 'auto',
           }}>
-            <h2 style={{ margin: '0 0 16px 0', fontSize: '18px' }}>
-              ✅ Today's Tasks
-            </h2>
-            {todaysTasks.length === 0 ? (
-              <p style={{ color: '#9ca3af', fontSize: '14px' }}>No tasks due today</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {todaysTasks.map((task) => (
-                  <label
-                    key={task.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      padding: '10px',
-                      background: '#f9fafb',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={task.completed}
-                      onChange={() => toggleTaskComplete(task.id!)}
-                      style={{ width: '18px', height: '18px' }}
-                    />
-                    <span style={{
-                      flex: 1,
-                      textDecoration: task.completed ? 'line-through' : 'none',
-                      color: task.completed ? '#9ca3af' : '#374151',
-                    }}>
-                      {task.title}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right Panel */}
-        <div>
-          {/* Today's Notes */}
-          <div style={{
-            background: 'white',
-            borderRadius: '8px',
-            padding: '20px',
-            marginBottom: '20px',
-            border: '1px solid #e5e7eb',
-          }}>
-            <h2 style={{ margin: '0 0 16px 0', fontSize: '18px' }}>
-              📝 Notes for Today
-            </h2>
-            {todaysNotes.length === 0 ? (
-              <p style={{ color: '#9ca3af', fontSize: '14px' }}>No notes for today</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {todaysNotes.map((note) => (
-                  <div
-                    key={note.id}
-                    style={{
-                      padding: '12px',
-                      background: '#fef3c7',
-                      borderRadius: '6px',
-                      borderLeft: '3px solid #f59e0b',
-                    }}
-                  >
-                    <div style={{ fontWeight: 600, marginBottom: '4px' }}>
-                      {note.title}
-                    </div>
-                    {note.body && (
-                      <div style={{ fontSize: '13px', color: '#6b7280' }}>
-                        {note.body.substring(0, 100)}
-                        {note.body.length > 100 && '...'}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Contact Context */}
-          <div style={{
-            background: 'white',
-            borderRadius: '8px',
-            padding: '20px',
-            border: '1px solid #e5e7eb',
-          }}>
-            <h2 style={{ margin: '0 0 16px 0', fontSize: '18px' }}>
-              👥 Upcoming Meetings
-            </h2>
-            <p style={{ color: '#9ca3af', fontSize: '14px' }}>
-              Contact context coming soon...
-            </p>
+            <ContextSidebar
+              selectedEvent={selectedEvent}
+              selectedDateKey={selectedDateKey}
+              tasks={scopedTasks}
+              notes={scopedNotes}
+              followUps={scopedFollowUps}
+              onToggleTask={toggleTaskComplete}
+              onCreateTask={handleCreateTaskInScope}
+              onCreateNote={handleCreateNoteInScope}
+              onClearScope={handleClearScope}
+            />
           </div>
         </div>
       </div>
 
-      {activeContextId === null && (
-        <div style={{
-          marginTop: '20px',
-          padding: '12px',
-          background: '#fef3c7',
-          borderRadius: '6px',
-          fontSize: '14px',
-          color: '#92400e',
-        }}>
-          💡 <strong>Tip:</strong> Select a context (Work, Academic, Personal) above to filter your data
-        </div>
+      {/* Event Detail Modal (legacy, for contact management) */}
+      {eventDetailModalEvent && (
+        <EventDetailModal
+          event={eventDetailModalEvent}
+          onClose={() => setEventDetailModalEvent(null)}
+          availableContacts={filteredContacts}
+          unresolvedContactNames={
+            eventContactCounts.get(eventDetailModalEvent.id!) === 0 ? lastParsedContactNames : []
+          }
+          onCreateContact={async (name) => {
+            if (!activeContextId) return;
+            try {
+              await addContact({
+                contextId: activeContextId,
+                name,
+              });
+              toast.success(`Contact "${name}" created!`);
+              const contactIds = await eventService.getEventContacts(eventDetailModalEvent.id!);
+              setEventContactCounts(new Map(eventContactCounts.set(eventDetailModalEvent.id!, contactIds.length)));
+              setLastParsedContactNames([]);
+            } catch (error) {
+              toast.error('Failed to create contact');
+            }
+          }}
+        />
       )}
-    </div>
+    </>
   );
 }

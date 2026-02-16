@@ -1,13 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useStore } from '../store';
-import type { Contact } from '../types/entities';
-import { formatDate } from '../utils/dates';
+import type { Contact, MeetingNote, Event } from '../types/entities';
+import { formatDate, formatTime } from '../utils/dates';
 import toast from 'react-hot-toast';
+import { meetingNoteService } from '../services/meetingNotes';
+import { DateTime } from 'luxon';
 
 export function ContactsView() {
-  const { filteredContacts, addContact, updateContact, deleteContact, activeContextId } = useStore();
+  const { filteredContacts, filteredTasks, addContact, updateContact, deleteContact, activeContextId } = useStore();
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [meetingNotes, setMeetingNotes] = useState<Array<MeetingNote & { event: Event }>>([]);
   const [formData, setFormData] = useState({
     name: '',
     company: '',
@@ -15,14 +18,24 @@ export function ContactsView() {
     email: '',
     phone: '',
     generalNotes: '',
+    nextFollowUpDate: '',
   });
+
+  // Load meeting notes when contact is selected
+  useEffect(() => {
+    if (selectedContact && !isEditing) {
+      meetingNoteService.getByContact(selectedContact.id!).then(setMeetingNotes);
+    } else {
+      setMeetingNotes([]);
+    }
+  }, [selectedContact, isEditing]);
 
   const handleAddNew = () => {
     if (!activeContextId) {
       toast.error('Please select a context first');
       return;
     }
-    setFormData({ name: '', company: '', role: '', email: '', phone: '', generalNotes: '' });
+    setFormData({ name: '', company: '', role: '', email: '', phone: '', generalNotes: '', nextFollowUpDate: '' });
     setSelectedContact(null);
     setIsEditing(true);
   };
@@ -36,6 +49,9 @@ export function ContactsView() {
       email: contact.email || '',
       phone: contact.phone || '',
       generalNotes: contact.generalNotes || '',
+      nextFollowUpDate: contact.nextFollowUpDate
+        ? DateTime.fromMillis(contact.nextFollowUpDate).toFormat('yyyy-MM-dd')
+        : '',
     });
     setIsEditing(true);
   };
@@ -47,12 +63,19 @@ export function ContactsView() {
     }
 
     try {
+      const dataToSave = {
+        ...formData,
+        nextFollowUpDate: formData.nextFollowUpDate
+          ? DateTime.fromFormat(formData.nextFollowUpDate, 'yyyy-MM-dd').toMillis()
+          : undefined,
+      };
+
       if (selectedContact) {
-        await updateContact(selectedContact.id!, formData);
+        await updateContact(selectedContact.id!, dataToSave);
         toast.success('Contact updated!');
       } else {
         await addContact({
-          ...formData,
+          ...dataToSave,
           contextId: activeContextId!,
         });
         toast.success('Contact added!');
@@ -226,6 +249,26 @@ export function ContactsView() {
               </div>
 
               <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600 }}>
+                  Next Follow-up Date
+                </label>
+                <input
+                  type="date"
+                  value={formData.nextFollowUpDate}
+                  onChange={(e) => setFormData({ ...formData, nextFollowUpDate: e.target.value })}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                  }}
+                />
+                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                  Set a reminder to follow up with this contact
+                </div>
+              </div>
+
+              <div>
                 <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600 }}>Notes</label>
                 <textarea
                   value={formData.generalNotes}
@@ -291,7 +334,8 @@ export function ContactsView() {
             </div>
           </div>
         ) : selectedContact ? (
-          <div style={{ maxWidth: '600px' }}>
+          <div style={{ maxWidth: '800px' }}>
+            {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '24px' }}>
               <div>
                 <h2 style={{ margin: '0 0 8px 0' }}>{selectedContact.name}</h2>
@@ -321,8 +365,9 @@ export function ContactsView() {
               </button>
             </div>
 
+            {/* Contact Information */}
             <div style={{ background: 'white', borderRadius: '8px', padding: '20px', marginBottom: '16px' }}>
-              <h3 style={{ marginTop: 0 }}>Contact Information</h3>
+              <h3 style={{ marginTop: 0 }}>📞 Contact Information</h3>
               {selectedContact.email && (
                 <p><strong>Email:</strong> {selectedContact.email}</p>
               )}
@@ -337,9 +382,88 @@ export function ContactsView() {
               )}
             </div>
 
+            {/* Meeting Notes */}
+            <div style={{ background: 'white', borderRadius: '8px', padding: '20px', marginBottom: '16px' }}>
+              <h3 style={{ marginTop: 0 }}>📅 Meeting Notes</h3>
+              {meetingNotes.length === 0 ? (
+                <p style={{ color: '#9ca3af', fontSize: '14px' }}>No meeting notes yet</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {meetingNotes.map((note, index) => (
+                    <div
+                      key={note.id}
+                      style={{
+                        padding: '12px',
+                        background: index === 0 ? '#f0f9ff' : '#f9fafb',
+                        border: index === 0 ? '1px solid #3b82f6' : '1px solid #e5e7eb',
+                        borderRadius: '6px',
+                      }}
+                    >
+                      {index === 0 && (
+                        <div style={{
+                          fontSize: '11px',
+                          color: '#3b82f6',
+                          fontWeight: 600,
+                          marginBottom: '4px',
+                        }}>
+                          MOST RECENT
+                        </div>
+                      )}
+                      <div style={{ fontWeight: 600, marginBottom: '4px' }}>
+                        {note.event.title}
+                      </div>
+                      <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '8px' }}>
+                        {formatDate(note.event.startTime, 'MMM dd, yyyy')} at {formatTime(note.event.startTime)}
+                      </div>
+                      <div style={{ fontSize: '14px', whiteSpace: 'pre-wrap' }}>
+                        {note.content}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Open Tasks */}
+            {(() => {
+              const contactTasks = filteredTasks.filter(
+                t => t.linkedContactIds.includes(selectedContact.id!) && !t.completed
+              );
+              return (
+                <div style={{ background: 'white', borderRadius: '8px', padding: '20px', marginBottom: '16px' }}>
+                  <h3 style={{ marginTop: 0 }}>✅ Open Tasks</h3>
+                  {contactTasks.length === 0 ? (
+                    <p style={{ color: '#9ca3af', fontSize: '14px' }}>No open tasks</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {contactTasks.map(task => (
+                        <div
+                          key={task.id}
+                          style={{
+                            padding: '10px',
+                            background: '#fef3c7',
+                            border: '1px solid #f59e0b',
+                            borderRadius: '6px',
+                          }}
+                        >
+                          <div style={{ fontWeight: 600 }}>{task.title}</div>
+                          {task.dueDate && (
+                            <div style={{ fontSize: '13px', color: '#92400e', marginTop: '4px' }}>
+                              Due: {formatDate(task.dueDate, 'MMM dd, yyyy')}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* General Notes */}
             {selectedContact.generalNotes && (
               <div style={{ background: 'white', borderRadius: '8px', padding: '20px' }}>
-                <h3 style={{ marginTop: 0 }}>Notes</h3>
+                <h3 style={{ marginTop: 0 }}>📝 General Notes</h3>
                 <p style={{ whiteSpace: 'pre-wrap' }}>{selectedContact.generalNotes}</p>
               </div>
             )}

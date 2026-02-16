@@ -1,6 +1,7 @@
 // Core entity types for the Relationship Calendar CRM
 
 export type ContextType = 'work' | 'academic' | 'personal';
+export type NoteScope = 'day' | 'event' | 'general';
 
 export interface Context {
   id?: number;
@@ -49,10 +50,12 @@ export interface EventContact {
 export interface Task {
   id?: number;
   contextId: number;
-  contactId?: number; // Optional link to contact
+  linkedContactIds: number[]; // Multi-contact linking (replaces contactId)
+  linkedEventId?: number; // Event Scope: link to specific event
   title: string;
   description?: string;
-  dueDate?: number;
+  dueDate?: number; // Timestamp (kept for backward compatibility)
+  dueDateKey?: string; // YYYY-MM-DD format (new)
   completed: boolean;
   priority?: 'low' | 'medium' | 'high';
   createdAt: number;
@@ -62,8 +65,12 @@ export interface Task {
 export interface Note {
   id?: number;
   contextId: number;
-  contactId?: number; // Optional link to contact
-  dateRef?: number; // Optional date reference
+  linkedContactIds: number[]; // Multi-contact linking (replaces contactId)
+  dateRef?: number; // Day Scope: date reference (timestamp, kept for backward compatibility)
+  dateKey?: string; // YYYY-MM-DD format (new)
+  scope: NoteScope; // Explicit scope: day, event, or general
+  linkedEventId?: number; // Event Scope: link to specific event
+  topicTags: string[]; // Topic categorization (ONLY for general notes)
   title: string;
   body?: string;
   createdAt: number;
